@@ -1,0 +1,60 @@
+// ============================================================
+//  RearView Camera Service — AOSP Native C++ Service
+//  Build with: mmm vendor/[your_oem]/rvc_service
+// ============================================================
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_binary {
+    name: "rvc_service",
+
+    srcs: [
+        "main.cpp",
+        "GearSelectionMonitor.cpp",
+        "CameraStreamManager.cpp",
+        "RtpStreamer.cpp",
+    ],
+
+    local_include_dirs: ["include"],
+
+    shared_libs: [
+        // Android core
+        "liblog",
+        "libutils",
+        "libcutils",
+        "libbinder",
+        "libbase",
+
+        // Camera
+        "libcamera2ndk",           // ACameraManager, ACameraDevice, etc.
+        "libmediandk",             // AMediaCodec, AMediaFormat
+
+        // Vehicle / Car VHAL
+        "android.hardware.automotive.vehicle@2.0",
+        "libhidlbase",
+        "libhardware",
+
+        // Network (for UDP socket — already in libc, listed for clarity)
+        "libc",
+    ],
+
+    static_libs: [
+        "libaidlcommonsupport",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-std=c++17",
+        "-DLOG_TAG=\"RearViewCameraSvc\"",
+    ],
+
+    // Run as its own user/group defined in init.rc
+    init_rc: ["rvc_service.rc"],
+
+    // Install to /vendor/bin so it's available early in the boot sequence
+    vendor: true,
+}

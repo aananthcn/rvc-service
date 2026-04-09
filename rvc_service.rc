@@ -1,0 +1,20 @@
+# /vendor/etc/init/rvc_service.rc
+#
+# Android Init Language service definition.
+# This file is packaged by Android.bp (init_rc:) and installed to
+# /vendor/etc/init/ automatically during the AOSP build.
+#
+# The init process reads it on boot and starts our binary.
+
+service rvc_service /vendor/bin/rvc_service
+    class hal                       # starts after HALs are up
+    user cameraserver               # reuse cameraserver UID for camera access
+    group camera net_raw inet       # camera + raw network socket privileges
+    capabilities NET_RAW            # needed for raw UDP socket binding
+    ioprio rt 4
+    writepid /dev/cpuset/camera-daemon/tasks
+    onrestart restart cameraserver
+
+# The service is started by this trigger once the vehicle HAL is ready
+on property:vendor.vhal.initialized=1
+    start rvc_service
