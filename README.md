@@ -15,10 +15,11 @@ to the Instrument Cluster (`192.168.10.10:5004`) whenever reverse is engaged.
         └── rvc_service/ ← drop this entire folder here
             ├── Android.bp
             ├── rvc_service.rc
-            ├── main.cpp
-            ├── GearSelectionMonitor.cpp
-            ├── CameraStreamManager.cpp
-            ├── RtpStreamer.cpp
+            ├── src/
+            │   ├── main.cpp
+            │   ├── GearSelectionMonitor.cpp
+            │   ├── CameraStreamManager.cpp
+            │   └── RtpStreamer.cpp
             └── include/
                 ├── CameraConfig.h
                 ├── GearSelectionMonitor.h
@@ -87,8 +88,13 @@ up on next boot.
 
 ## How to push and test during development (without a full flash)
 
+> **Requires a userdebug or eng build with `BOARD_AVB_ENABLE := false`.**
+> The RPi5 `BoardConfig.mk` already sets this. If you see
+> "Device must be bootloader unlocked", your image was built before that
+> change — rebuild and reflash.
+
 ```bash
-# Remount vendor partition as writable (userdebug/eng builds only)
+# Remount vendor partition as writable
 adb root
 adb remount
 
@@ -195,6 +201,7 @@ init (rvc_service.rc)
 
 | Symptom | Likely cause & fix |
 |---|---|
+| `adb remount` → "Device must be bootloader unlocked" or `adb push` → "Read-only file system" | Image was built with AVB enabled. Add `BOARD_AVB_ENABLE := false` to `BoardConfig.mk`, rebuild (`m rvc_service`), reflash the vendor image, then retry |
 | `IVehicle::getService() returned null` | VHAL not running yet; check `vendor.vhal.initialized` property in `.rc` file |
 | `ACameraManager_openCamera failed` | Wrong `CAMERA_ID`, or service doesn't have `camera` group — check `.rc` `group` line |
 | Binary builds but crashes on device | Mismatched HIDL version; verify `android.hardware.automotive.vehicle@2.0` is in your device's VINTF |

@@ -1,0 +1,2 @@
+# vendor_restricted_prop: vendor can set, coredomain can read (not set)
+vendor_restricted_prop(vendor_rvc_prop)

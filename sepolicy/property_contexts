@@ -1,0 +1,2 @@
+# RearView Camera — gear state signal from rvc_service to rvc_app
+vendor.rvc.camera.active    u:object_r:vendor_rvc_prop:s0

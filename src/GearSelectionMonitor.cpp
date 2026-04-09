@@ -1,5 +1,5 @@
 #include "GearSelectionMonitor.h"
-#include "CameraConfig.h"
+#include "GearConfig.h"
 
 #include <log/log.h>
 #include <hidl/HidlSupport.h>

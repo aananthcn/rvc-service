@@ -3,7 +3,8 @@
 #include <atomic>
 
 #include "GearSelectionMonitor.h"
-#include "CameraStreamManager.h"
+#include "PropertyController.h"
+#include "GearConfig.h"
 
 // ── Graceful shutdown on SIGTERM / SIGINT ─────────────────────────────────────
 static std::atomic<bool> gRunning{true};
@@ -16,17 +17,20 @@ static void signalHandler(int /*sig*/) {
 int main(int /*argc*/, char** /*argv*/) {
     ALOGI("RearView Camera Service starting…");
 
-    // Install signal handlers so init can stop us cleanly
     signal(SIGTERM, signalHandler);
     signal(SIGINT,  signalHandler);
 
-    // The camera manager lives for the entire service lifetime
-    rearview::CameraStreamManager cameraStream;
+    // Property controller writes vendor.rvc.camera.active=1/0.
+    // rvc_app watches this property and controls the camera pipeline.
+    rearview::PropertyController propCtrl(rearview::RVC_PROP_CAMERA_ACTIVE);
 
-    // The gear monitor drives the camera: reverse in → open, reverse out → close
+    // Initialise to 0 so rvc_app starts in a known state (handles restarts).
+    propCtrl.notifyNotReverse();
+
+    // Gear monitor drives the property: reverse → "1", not reverse → "0".
     rearview::GearSelectionMonitor gearMonitor(
-        /* onReverse    */ [&cameraStream]() { cameraStream.open();  },
-        /* onNotReverse */ [&cameraStream]() { cameraStream.close(); }
+        /* onReverse    */ [&propCtrl]() { propCtrl.notifyReverse();    },
+        /* onNotReverse */ [&propCtrl]() { propCtrl.notifyNotReverse(); }
     );
 
     if (!gearMonitor.start()) {
@@ -36,15 +40,13 @@ int main(int /*argc*/, char** /*argv*/) {
 
     ALOGI("Service ready — waiting for GEAR_SELECTION events");
 
-    // Block until the init system sends SIGTERM or the process is stopped
     while (gRunning.load()) {
-        // pause() sleeps until any signal arrives; the handler sets gRunning=false
-        pause();
+        pause(); // sleep until any signal arrives
     }
 
     ALOGI("Shutdown signal received — cleaning up");
     gearMonitor.stop();
-    cameraStream.close();
+    propCtrl.notifyNotReverse(); // ensure rvc_app stops the stream on shutdown
 
     ALOGI("RearView Camera Service stopped");
     return 0;

@@ -1,20 +1,19 @@
 # /vendor/etc/init/rvc_service.rc
 #
-# Android Init Language service definition.
-# This file is packaged by Android.bp (init_rc:) and installed to
-# /vendor/etc/init/ automatically during the AOSP build.
+# Gear selection monitor daemon.
+# Subscribes to VHAL GEAR_SELECTION and writes
+# vendor.rvc.camera.active=1/0 to signal rvc_app.
 #
-# The init process reads it on boot and starts our binary.
+# Started after the Vehicle HAL is ready.
 
 service rvc_service /vendor/bin/rvc_service
-    class hal                       # starts after HALs are up
-    user cameraserver               # reuse cameraserver UID for camera access
-    group camera net_raw inet       # camera + raw network socket privileges
-    capabilities NET_RAW            # needed for raw UDP socket binding
+    class hal
+    user system
+    group system
     ioprio rt 4
-    writepid /dev/cpuset/camera-daemon/tasks
-    onrestart restart cameraserver
+    writepid /dev/cpuset/system-background/tasks
+    onrestart restart rvc_service
 
-# The service is started by this trigger once the vehicle HAL is ready
+# Wait for VHAL to finish initialising before connecting.
 on property:vendor.vhal.initialized=1
     start rvc_service

@@ -1,6 +1,10 @@
 // ============================================================
-//  RearView Camera Service — AOSP Native C++ Service
-//  Build with: mmm vendor/[your_oem]/rvc_service
+//  rvc_service — Gear monitor daemon (vendor binary)
+//
+//  Subscribes to Vehicle HAL GEAR_SELECTION and signals
+//  rvc_app by writing vendor.rvc.camera.active=1/0.
+//
+//  Build with: mmm vendor/brcm/rvc-service
 // ============================================================
 
 package {
@@ -13,8 +17,7 @@ cc_binary {
     srcs: [
         "src/main.cpp",
         "src/GearSelectionMonitor.cpp",
-        "src/CameraStreamManager.cpp",
-        "src/RtpStreamer.cpp",
+        "src/PropertyController.cpp",
     ],
 
     local_include_dirs: ["include"],
@@ -24,20 +27,13 @@ cc_binary {
         "liblog",
         "libutils",
         "libcutils",
-        "libbinder",
-        "libbase",
+        "libbase",         // android::base::SetProperty
 
-        // Camera
-        "libcamera2ndk",           // ACameraManager, ACameraDevice, etc.
-        "libmediandk",             // AMediaCodec, AMediaFormat
-        "libnativewindow",         // ANativeWindow_release
-
-        // Vehicle / Car VHAL
+        // Vehicle HAL (HIDL)
         "android.hardware.automotive.vehicle@2.0",
         "libhidlbase",
         "libhardware",
 
-        // Network (for UDP socket — already in libc, listed for clarity)
         "libc",
     ],
 
@@ -53,9 +49,8 @@ cc_binary {
         "-DLOG_TAG=\"RearViewCameraSvc\"",
     ],
 
-    // Run as its own user/group defined in init.rc
     init_rc: ["rvc_service.rc"],
 
-    // Install to /vendor/bin so it's available early in the boot sequence
+    // Must stay vendor — needed to access HIDL Vehicle HAL.
     vendor: true,
 }
