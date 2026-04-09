@@ -11,10 +11,10 @@ cc_binary {
     name: "rvc_service",
 
     srcs: [
-        "main.cpp",
-        "GearSelectionMonitor.cpp",
-        "CameraStreamManager.cpp",
-        "RtpStreamer.cpp",
+        "src/main.cpp",
+        "src/GearSelectionMonitor.cpp",
+        "src/CameraStreamManager.cpp",
+        "src/RtpStreamer.cpp",
     ],
 
     local_include_dirs: ["include"],
@@ -30,6 +30,7 @@ cc_binary {
         // Camera
         "libcamera2ndk",           // ACameraManager, ACameraDevice, etc.
         "libmediandk",             // AMediaCodec, AMediaFormat
+        "libnativewindow",         // ANativeWindow_release
 
         // Vehicle / Car VHAL
         "android.hardware.automotive.vehicle@2.0",

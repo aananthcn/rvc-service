@@ -87,7 +87,7 @@ void GearSelectionMonitor::readInitialGear() {
     StatusCode outStatus = StatusCode::OK;
     mVehicle->get(request, [&](StatusCode status, const VehiclePropValue& val) {
         outStatus = status;
-        if (status == StatusCode::OK && !val.value.int32Values.empty()) {
+        if (status == StatusCode::OK && val.value.int32Values.size() > 0) {
             ALOGI("Initial gear value: %d", val.value.int32Values[0]);
             evaluateGear(val.value.int32Values[0]);
         }
@@ -119,7 +119,7 @@ void GearSelectionMonitor::evaluateGear(int32_t gear) {
 Return<void> GearSelectionMonitor::VhalCallback::onPropertyEvent(
         const hidl_vec<VehiclePropValue>& propValues) {
     for (const auto& val : propValues) {
-        if (val.prop == PROP_GEAR_SELECTION && !val.value.int32Values.empty()) {
+        if (val.prop == PROP_GEAR_SELECTION && val.value.int32Values.size() > 0) {
             const int32_t gear = val.value.int32Values[0];
             ALOGD("GEAR_SELECTION event: gear=%d", gear);
             mParent.evaluateGear(gear);
