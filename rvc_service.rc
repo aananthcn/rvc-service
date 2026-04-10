@@ -10,10 +10,11 @@ service rvc_service /vendor/bin/rvc_service
     class hal
     user system
     group system
+    disabled
     ioprio rt 4
     writepid /dev/cpuset/system-background/tasks
     onrestart restart rvc_service
 
-# Wait for VHAL to finish initialising before connecting.
-on property:vendor.vhal.initialized=1
+# Start only after the Vehicle HAL service is running.
+on property:init.svc.vendor.vehicle-hal-default=running
     start rvc_service

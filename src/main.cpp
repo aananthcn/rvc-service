@@ -1,3 +1,4 @@
+#include <android/binder_process.h>
 #include <log/log.h>
 #include <signal.h>
 #include <atomic>
@@ -19,6 +20,10 @@ int main(int /*argc*/, char** /*argv*/) {
 
     signal(SIGTERM, signalHandler);
     signal(SIGINT,  signalHandler);
+
+    // Start a binder thread pool so VHAL can deliver onPropertyEvent callbacks.
+    ABinderProcess_setThreadPoolMaxThreadCount(1);
+    ABinderProcess_startThreadPool();
 
     // Property controller writes vendor.rvc.camera.active=1/0.
     // rvc_app watches this property and controls the camera pipeline.

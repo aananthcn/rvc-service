@@ -1,11 +1,12 @@
 #pragma once
 
-#include <android/hardware/automotive/vehicle/2.0/IVehicle.h>
-#include <android/hardware/automotive/vehicle/2.0/IVehicleCallback.h>
+#include <aidl/android/hardware/automotive/vehicle/BnVehicleCallback.h>
+#include <aidl/android/hardware/automotive/vehicle/IVehicle.h>
 
-#include <utils/StrongPointer.h>
 #include <atomic>
+#include <condition_variable>
 #include <functional>
+#include <mutex>
 
 namespace rearview {
 
@@ -30,25 +31,31 @@ private:
     void readInitialGear();
     void evaluateGear(int32_t gear);
 
-    // Inner HIDL callback object registered with IVehicle::subscribe().
-    struct VhalCallback
-        : public android::hardware::automotive::vehicle::V2_0::IVehicleCallback {
-
+    // AIDL callback object registered with IVehicle::subscribe().
+    class VhalCallback
+        : public aidl::android::hardware::automotive::vehicle::BnVehicleCallback {
+    public:
         explicit VhalCallback(GearSelectionMonitor& parent) : mParent(parent) {}
 
-        android::hardware::Return<void> onPropertyEvent(
-            const android::hardware::hidl_vec<
-                android::hardware::automotive::vehicle::V2_0::VehiclePropValue>& propValues)
+        ::ndk::ScopedAStatus onGetValues(
+            const aidl::android::hardware::automotive::vehicle::GetValueResults& responses)
             override;
 
-        android::hardware::Return<void> onPropertySet(
-            const android::hardware::automotive::vehicle::V2_0::VehiclePropValue& propValue)
+        ::ndk::ScopedAStatus onSetValues(
+            const aidl::android::hardware::automotive::vehicle::SetValueResults& responses)
             override;
 
-        android::hardware::Return<void> onPropertySetError(
-            android::hardware::automotive::vehicle::V2_0::StatusCode errorCode,
-            int32_t propId,
-            int32_t areaId)
+        ::ndk::ScopedAStatus onPropertyEvent(
+            const aidl::android::hardware::automotive::vehicle::VehiclePropValues& propValues,
+            int32_t sharedMemoryFileCount)
+            override;
+
+        ::ndk::ScopedAStatus onPropertySetError(
+            const aidl::android::hardware::automotive::vehicle::VehiclePropErrors& errors)
+            override;
+
+        ::ndk::ScopedAStatus onSupportedValueChange(
+            const std::vector<aidl::android::hardware::automotive::vehicle::PropIdAreaId>& propIdAreaIds)
             override;
 
     private:
@@ -58,8 +65,13 @@ private:
     GearCallback mOnReverse;
     GearCallback mOnNotReverse;
 
-    android::sp<android::hardware::automotive::vehicle::V2_0::IVehicle> mVehicle;
-    android::sp<VhalCallback> mCallback;
+    std::shared_ptr<aidl::android::hardware::automotive::vehicle::IVehicle> mVehicle;
+    std::shared_ptr<VhalCallback> mCallback;
+
+    // For synchronous initial gear read via async getValues.
+    std::mutex              mInitMutex;
+    std::condition_variable mInitCv;
+    bool                    mInitDone{false};
 
     std::atomic<bool> mRunning{false};
     std::atomic<bool> mCurrentlyInReverse{false};

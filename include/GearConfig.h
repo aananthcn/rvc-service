@@ -15,7 +15,7 @@ namespace rearview {
 static constexpr int32_t PROP_GEAR_SELECTION = 0x11400400;
 
 // VehicleGear::GEAR_REVERSE = 8
-// (hardware/interfaces/automotive/vehicle/2.0/types.hal)
+// (hardware/interfaces/automotive/vehicle/aidl/android/hardware/automotive/vehicle/VehicleGear.aidl)
 static constexpr int32_t GEAR_REVERSE = 8;
 
 // ── Control property ─────────────────────────────────────────────────────────

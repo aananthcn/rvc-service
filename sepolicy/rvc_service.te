@@ -6,8 +6,12 @@ type rvc_service_exec, exec_type, vendor_file_type, file_type;
 # Allow init to spawn rvc_service and transition into its domain
 init_daemon_domain(rvc_service)
 
-# HIDL Vehicle HAL client (handles hwbinder + hwservice_manager internally)
+# Vehicle HAL client — AIDL (binder) + HIDL (hwbinder) both covered
 hal_client_domain(rvc_service, hal_vehicle)
+
+# AIDL servicemanager access (needed for AServiceManager_checkService)
+binder_use(rvc_service)
+allow rvc_service hal_vehicle_service:service_manager find;
 
 # Write vendor.rvc.camera.active to signal rvc_app
 set_prop(rvc_service, vendor_rvc_prop)

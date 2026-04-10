@@ -29,10 +29,9 @@ cc_binary {
         "libcutils",
         "libbase",         // android::base::SetProperty
 
-        // Vehicle HAL (HIDL)
-        "android.hardware.automotive.vehicle@2.0",
-        "libhidlbase",
-        "libhardware",
+        // Vehicle HAL (AIDL V4 NDK)
+        "android.hardware.automotive.vehicle-V4-ndk",
+        "libbinder_ndk",   // AServiceManager_checkService, ndk::SpAIBinder
 
         "libc",
     ],
@@ -51,6 +50,6 @@ cc_binary {
 
     init_rc: ["rvc_service.rc"],
 
-    // Must stay vendor — needed to access HIDL Vehicle HAL.
+    // Must stay vendor — needed to access AIDL Vehicle HAL.
     vendor: true,
 }

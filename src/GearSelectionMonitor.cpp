@@ -1,18 +1,25 @@
 #include "GearSelectionMonitor.h"
 #include "GearConfig.h"
 
+#include <android/binder_manager.h>
 #include <log/log.h>
-#include <hidl/HidlSupport.h>
+
+#include <chrono>
+#include <thread>
 
 namespace rearview {
 
-using android::hardware::hidl_vec;
-using android::hardware::Return;
-using android::hardware::automotive::vehicle::V2_0::IVehicle;
-using android::hardware::automotive::vehicle::V2_0::VehiclePropValue;
-using android::hardware::automotive::vehicle::V2_0::SubscribeOptions;
-using android::hardware::automotive::vehicle::V2_0::SubscribeFlags;
-using android::hardware::automotive::vehicle::V2_0::StatusCode;
+using aidl::android::hardware::automotive::vehicle::GetValueRequests;
+using aidl::android::hardware::automotive::vehicle::GetValueRequest;
+using aidl::android::hardware::automotive::vehicle::GetValueResults;
+using aidl::android::hardware::automotive::vehicle::IVehicle;
+using aidl::android::hardware::automotive::vehicle::PropIdAreaId;
+using aidl::android::hardware::automotive::vehicle::SetValueResults;
+using aidl::android::hardware::automotive::vehicle::StatusCode;
+using aidl::android::hardware::automotive::vehicle::SubscribeOptions;
+using aidl::android::hardware::automotive::vehicle::VehiclePropErrors;
+using aidl::android::hardware::automotive::vehicle::VehiclePropValue;
+using aidl::android::hardware::automotive::vehicle::VehiclePropValues;
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
 
@@ -31,28 +38,27 @@ bool GearSelectionMonitor::start() {
     if (mRunning.load()) return true;
 
     if (!connectToVhal()) {
-        ALOGE("Cannot connect to Vehicle HAL");
+        ALOGE("GearMonitor: Cannot connect to Vehicle HAL");
         return false;
     }
 
-    // Subscribe to GEAR_SELECTION property change events
-    SubscribeOptions opt;
-    opt.propId = PROP_GEAR_SELECTION;
-    opt.flags  = SubscribeFlags::EVENTS_FROM_CAR;
-    opt.sampleRate = 0.0f; // ON_CHANGE
+    mCallback = ::ndk::SharedRefBase::make<VhalCallback>(*this);
 
-    mCallback = new VhalCallback(*this);
-    auto status = mVehicle->subscribe(mCallback, {opt});
+    SubscribeOptions opt;
+    opt.propId     = PROP_GEAR_SELECTION;
+    opt.sampleRate = 0.0f; // ON_CHANGE property
+
+    auto status = mVehicle->subscribe(mCallback, {opt}, /*maxSharedMemoryFileCount=*/2);
     if (!status.isOk()) {
-        ALOGE("Failed to subscribe to GEAR_SELECTION: %s",
-              status.description().c_str());
+        ALOGE("GearMonitor: Failed to subscribe to GEAR_SELECTION: %s",
+              status.getDescription().c_str());
         return false;
     }
 
     mRunning.store(true);
-    ALOGI("Subscribed to GEAR_SELECTION (propId=0x%08X)", PROP_GEAR_SELECTION);
+    ALOGI("GearMonitor: Subscribed to GEAR_SELECTION (propId=0x%08X)", PROP_GEAR_SELECTION);
 
-    // Read initial gear so we handle boot-with-reverse-engaged correctly
+    // Read initial gear so we handle boot-with-reverse-engaged correctly.
     readInitialGear();
     return true;
 }
@@ -61,83 +67,129 @@ void GearSelectionMonitor::stop() {
     if (!mRunning.exchange(false)) return;
 
     if (mVehicle && mCallback) {
-        mVehicle->unsubscribe(mCallback, PROP_GEAR_SELECTION);
+        mVehicle->unsubscribe(mCallback, {PROP_GEAR_SELECTION});
     }
-    mVehicle.clear();
-    mCallback.clear();
-    ALOGI("GearSelectionMonitor stopped");
+    mVehicle.reset();
+    mCallback.reset();
+    ALOGI("GearMonitor: stopped");
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 bool GearSelectionMonitor::connectToVhal() {
-    mVehicle = IVehicle::getService();
-    if (mVehicle == nullptr) {
-        ALOGE("IVehicle::getService() returned null");
-        return false;
+    constexpr int kMaxRetries      = 30;
+    constexpr auto kRetryInterval  = std::chrono::seconds(1);
+    static const char* kServiceName =
+        "android.hardware.automotive.vehicle.IVehicle/default";
+
+    for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
+        auto binder = AServiceManager_checkService(kServiceName);
+        if (binder != nullptr) {
+            mVehicle = IVehicle::fromBinder(::ndk::SpAIBinder(binder));
+            if (mVehicle != nullptr) {
+                ALOGI("GearMonitor: connected to Vehicle HAL (attempt %d)", attempt);
+                return true;
+            }
+        }
+        ALOGW("GearMonitor: VHAL not ready, retrying (%d/%d)…", attempt, kMaxRetries);
+        std::this_thread::sleep_for(kRetryInterval);
     }
-    ALOGI("Connected to Vehicle HAL");
-    return true;
+
+    ALOGE("GearMonitor: Vehicle HAL unavailable after %d attempts", kMaxRetries);
+    return false;
 }
 
 void GearSelectionMonitor::readInitialGear() {
-    VehiclePropValue request;
-    request.prop = PROP_GEAR_SELECTION;
+    GetValueRequest req;
+    req.requestId      = 1;
+    req.prop.prop      = PROP_GEAR_SELECTION;
+    req.prop.areaId    = 0;
 
-    StatusCode outStatus = StatusCode::OK;
-    mVehicle->get(request, [&](StatusCode status, const VehiclePropValue& val) {
-        outStatus = status;
-        if (status == StatusCode::OK && val.value.int32Values.size() > 0) {
-            ALOGI("Initial gear value: %d", val.value.int32Values[0]);
-            evaluateGear(val.value.int32Values[0]);
-        }
-    });
+    GetValueRequests requests;
+    requests.payloads = {req};
 
-    if (outStatus != StatusCode::OK) {
-        ALOGW("Could not read initial GEAR_SELECTION (status=%d)",
-              static_cast<int>(outStatus));
+    {
+        std::lock_guard<std::mutex> lock(mInitMutex);
+        mInitDone = false;
+    }
+
+    auto status = mVehicle->getValues(mCallback, requests);
+    if (!status.isOk()) {
+        ALOGW("GearMonitor: getValues failed for initial gear: %s",
+              status.getDescription().c_str());
+        return;
+    }
+
+    // Wait up to 2 seconds for the async response.
+    std::unique_lock<std::mutex> lock(mInitMutex);
+    mInitCv.wait_for(lock, std::chrono::seconds(2), [this] { return mInitDone; });
+    if (!mInitDone) {
+        ALOGW("GearMonitor: timed out waiting for initial gear value");
     }
 }
 
 void GearSelectionMonitor::evaluateGear(int32_t gear) {
-    const bool inReverse = (gear == GEAR_REVERSE);
-    // Only fire if the reverse state actually changes
+    const bool inReverse  = (gear == GEAR_REVERSE);
     const bool wasReverse = mCurrentlyInReverse.exchange(inReverse);
     if (inReverse == wasReverse) return;
 
     if (inReverse) {
-        ALOGI(">>> REVERSE engaged — starting camera stream");
+        ALOGI("GearMonitor: >>> REVERSE engaged — starting camera stream");
         if (mOnReverse) mOnReverse();
     } else {
-        ALOGI(">>> Out of REVERSE — stopping camera stream");
+        ALOGI("GearMonitor: >>> Out of REVERSE — stopping camera stream");
         if (mOnNotReverse) mOnNotReverse();
     }
 }
 
 // ── VhalCallback ─────────────────────────────────────────────────────────────
 
-Return<void> GearSelectionMonitor::VhalCallback::onPropertyEvent(
-        const hidl_vec<VehiclePropValue>& propValues) {
-    for (const auto& val : propValues) {
-        if (val.prop == PROP_GEAR_SELECTION && val.value.int32Values.size() > 0) {
-            const int32_t gear = val.value.int32Values[0];
-            ALOGD("GEAR_SELECTION event: gear=%d", gear);
-            mParent.evaluateGear(gear);
+::ndk::ScopedAStatus GearSelectionMonitor::VhalCallback::onPropertyEvent(
+        const VehiclePropValues& propValues, int32_t /*sharedMemoryFileCount*/) {
+    for (const auto& val : propValues.payloads) {
+        if (val.prop == PROP_GEAR_SELECTION && !val.value.int32Values.empty()) {
+            ALOGD("GearMonitor: GEAR_SELECTION event: gear=%d", val.value.int32Values[0]);
+            mParent.evaluateGear(val.value.int32Values[0]);
         }
     }
-    return android::hardware::Void();
+    return ::ndk::ScopedAStatus::ok();
 }
 
-Return<void> GearSelectionMonitor::VhalCallback::onPropertySet(
-        const VehiclePropValue& /*propValue*/) {
-    return android::hardware::Void();
+::ndk::ScopedAStatus GearSelectionMonitor::VhalCallback::onGetValues(
+        const GetValueResults& responses) {
+    for (const auto& result : responses.payloads) {
+        if (result.status == StatusCode::OK && result.prop.has_value() &&
+            result.prop->prop == PROP_GEAR_SELECTION &&
+            !result.prop->value.int32Values.empty()) {
+            ALOGI("GearMonitor: Initial gear value: %d", result.prop->value.int32Values[0]);
+            mParent.evaluateGear(result.prop->value.int32Values[0]);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(mParent.mInitMutex);
+        mParent.mInitDone = true;
+    }
+    mParent.mInitCv.notify_one();
+    return ::ndk::ScopedAStatus::ok();
 }
 
-Return<void> GearSelectionMonitor::VhalCallback::onPropertySetError(
-        StatusCode errorCode, int32_t propId, int32_t areaId) {
-    ALOGE("VHAL property set error: propId=0x%08X areaId=%d errorCode=%d",
-          propId, areaId, static_cast<int>(errorCode));
-    return android::hardware::Void();
+::ndk::ScopedAStatus GearSelectionMonitor::VhalCallback::onSetValues(
+        const SetValueResults& /*responses*/) {
+    return ::ndk::ScopedAStatus::ok();
+}
+
+::ndk::ScopedAStatus GearSelectionMonitor::VhalCallback::onPropertySetError(
+        const VehiclePropErrors& errors) {
+    for (const auto& err : errors.payloads) {
+        ALOGE("GearMonitor: VHAL property set error: propId=0x%08X areaId=%d status=%d",
+              err.propId, err.areaId, static_cast<int>(err.errorCode));
+    }
+    return ::ndk::ScopedAStatus::ok();
+}
+
+::ndk::ScopedAStatus GearSelectionMonitor::VhalCallback::onSupportedValueChange(
+        const std::vector<PropIdAreaId>& /*propIdAreaIds*/) {
+    return ::ndk::ScopedAStatus::ok();
 }
 
 } // namespace rearview
