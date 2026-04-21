@@ -34,8 +34,8 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // Gear monitor drives the property: reverse → "1", not reverse → "0".
     rearview::GearSelectionMonitor gearMonitor(
-        /* onReverse    */ [&propCtrl]() { propCtrl.notifyReverse();    },
-        /* onNotReverse */ [&propCtrl]() { propCtrl.notifyNotReverse(); }
+        /* onReverse    */ [&propCtrl]() { return propCtrl.notifyReverse();    },
+        /* onNotReverse */ [&propCtrl]() { return propCtrl.notifyNotReverse(); }
     );
 
     if (!gearMonitor.start()) {

@@ -7,20 +7,22 @@ namespace rearview {
 PropertyController::PropertyController(const std::string& propName)
     : mPropName(propName) {}
 
-void PropertyController::notifyReverse() {
+bool PropertyController::notifyReverse() {
     if (android::base::SetProperty(mPropName, "1")) {
         ALOGI("GearMonitor: set %s=1 (REVERSE)", mPropName.c_str());
-    } else {
-        ALOGE("GearMonitor: failed to set %s=1", mPropName.c_str());
+        return true;
     }
+    ALOGE("GearMonitor: failed to set %s=1 — state rolled back", mPropName.c_str());
+    return false;
 }
 
-void PropertyController::notifyNotReverse() {
+bool PropertyController::notifyNotReverse() {
     if (android::base::SetProperty(mPropName, "0")) {
         ALOGI("GearMonitor: set %s=0 (NOT REVERSE)", mPropName.c_str());
-    } else {
-        ALOGE("GearMonitor: failed to set %s=0", mPropName.c_str());
+        return true;
     }
+    ALOGE("GearMonitor: failed to set %s=0", mPropName.c_str());
+    return false;
 }
 
 } // namespace rearview

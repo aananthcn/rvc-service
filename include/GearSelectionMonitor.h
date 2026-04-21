@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <thread>
 
 namespace rearview {
 
@@ -15,7 +16,9 @@ namespace rearview {
 // duplicate open/close calls.
 class GearSelectionMonitor {
 public:
-    using GearCallback = std::function<void()>;
+    // Returns true on success; returning false from onReverse rolls back the
+    // internal state so the next REVERSE event retries rather than no-ops.
+    using GearCallback = std::function<bool()>;
 
     GearSelectionMonitor(GearCallback onReverse, GearCallback onNotReverse);
     ~GearSelectionMonitor();
@@ -28,7 +31,7 @@ public:
 
 private:
     bool connectToVhal();
-    void readInitialGear();
+    void pollLoop();
     void evaluateGear(int32_t gear);
 
     // AIDL callback object registered with IVehicle::subscribe().
@@ -68,13 +71,12 @@ private:
     std::shared_ptr<aidl::android::hardware::automotive::vehicle::IVehicle> mVehicle;
     std::shared_ptr<VhalCallback> mCallback;
 
-    // For synchronous initial gear read via async getValues.
-    std::mutex              mInitMutex;
-    std::condition_variable mInitCv;
-    bool                    mInitDone{false};
-
     std::atomic<bool> mRunning{false};
     std::atomic<bool> mCurrentlyInReverse{false};
+
+    std::thread             mPollThread;
+    std::mutex              mPollMutex;
+    std::condition_variable mPollCv;
 };
 
 } // namespace rearview

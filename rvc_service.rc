@@ -13,8 +13,7 @@ service rvc_service /vendor/bin/rvc_service
     disabled
     ioprio rt 4
     writepid /dev/cpuset/system-background/tasks
-    onrestart restart rvc_service
 
-# Start only after the Vehicle HAL service is running.
-on property:init.svc.vendor.vehicle-hal-default=running
+# Start only after the custom vhal-grpc bridge is running.
+on property:init.svc.vhal-grpc=running
     start rvc_service

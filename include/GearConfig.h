@@ -14,9 +14,9 @@ namespace rearview {
 // VehicleProperty::GEAR_SELECTION = 0x11400400 = 289408000
 static constexpr int32_t PROP_GEAR_SELECTION = 0x11400400;
 
-// VehicleGear::GEAR_REVERSE = 8
-// (hardware/interfaces/automotive/vehicle/aidl/android/hardware/automotive/vehicle/VehicleGear.aidl)
-static constexpr int32_t GEAR_REVERSE = 8;
+// VehicleGear::GEAR_REVERSE = 0x0002 = 2
+// (hardware/interfaces/automotive/vehicle/aidl_property/.../VehicleGear.aidl)
+static constexpr int32_t GEAR_REVERSE = 0x0002;
 
 // ── Control property ─────────────────────────────────────────────────────────
 // Vendor system property read by rvc_app.

@@ -5,12 +5,14 @@
 #include <log/log.h>
 
 #include <chrono>
+#include <mutex>
 #include <thread>
+
 
 namespace rearview {
 
-using aidl::android::hardware::automotive::vehicle::GetValueRequests;
 using aidl::android::hardware::automotive::vehicle::GetValueRequest;
+using aidl::android::hardware::automotive::vehicle::GetValueRequests;
 using aidl::android::hardware::automotive::vehicle::GetValueResults;
 using aidl::android::hardware::automotive::vehicle::IVehicle;
 using aidl::android::hardware::automotive::vehicle::PropIdAreaId;
@@ -18,7 +20,6 @@ using aidl::android::hardware::automotive::vehicle::SetValueResults;
 using aidl::android::hardware::automotive::vehicle::StatusCode;
 using aidl::android::hardware::automotive::vehicle::SubscribeOptions;
 using aidl::android::hardware::automotive::vehicle::VehiclePropErrors;
-using aidl::android::hardware::automotive::vehicle::VehiclePropValue;
 using aidl::android::hardware::automotive::vehicle::VehiclePropValues;
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
@@ -57,14 +58,15 @@ bool GearSelectionMonitor::start() {
 
     mRunning.store(true);
     ALOGI("GearMonitor: Subscribed to GEAR_SELECTION (propId=0x%08X)", PROP_GEAR_SELECTION);
-
-    // Read initial gear so we handle boot-with-reverse-engaged correctly.
-    readInitialGear();
+    mPollThread = std::thread(&GearSelectionMonitor::pollLoop, this);
     return true;
 }
 
 void GearSelectionMonitor::stop() {
     if (!mRunning.exchange(false)) return;
+
+    mPollCv.notify_one();
+    if (mPollThread.joinable()) mPollThread.join();
 
     if (mVehicle && mCallback) {
         mVehicle->unsubscribe(mCallback, {PROP_GEAR_SELECTION});
@@ -76,66 +78,59 @@ void GearSelectionMonitor::stop() {
 
 // ── Internal ──────────────────────────────────────────────────────────────────
 
+void GearSelectionMonitor::pollLoop() {
+    using namespace std::chrono_literals;
+    while (mRunning.load()) {
+        std::unique_lock<std::mutex> lk(mPollMutex);
+        mPollCv.wait_for(lk, 500ms, [this] { return !mRunning.load(); });
+        if (!mRunning.load()) break;
+
+        GetValueRequest req;
+        req.requestId   = 1;
+        req.prop.prop   = PROP_GEAR_SELECTION;
+        req.prop.areaId = 0;
+        GetValueRequests requests;
+        requests.payloads = {req};
+        if (mVehicle) mVehicle->getValues(mCallback, requests);
+    }
+}
+
 bool GearSelectionMonitor::connectToVhal() {
-    constexpr int kMaxRetries      = 30;
-    constexpr auto kRetryInterval  = std::chrono::seconds(1);
     static const char* kServiceName =
         "android.hardware.automotive.vehicle.IVehicle/default";
 
-    for (int attempt = 1; attempt <= kMaxRetries; ++attempt) {
-        auto binder = AServiceManager_checkService(kServiceName);
-        if (binder != nullptr) {
-            mVehicle = IVehicle::fromBinder(::ndk::SpAIBinder(binder));
-            if (mVehicle != nullptr) {
-                ALOGI("GearMonitor: connected to Vehicle HAL (attempt %d)", attempt);
-                return true;
-            }
+    ALOGI("GearMonitor: waiting for Vehicle HAL…");
+    auto binder = AServiceManager_waitForService(kServiceName);
+    if (binder != nullptr) {
+        mVehicle = IVehicle::fromBinder(::ndk::SpAIBinder(binder));
+        if (mVehicle != nullptr) {
+            ALOGI("GearMonitor: connected to Vehicle HAL");
+            return true;
         }
-        ALOGW("GearMonitor: VHAL not ready, retrying (%d/%d)…", attempt, kMaxRetries);
-        std::this_thread::sleep_for(kRetryInterval);
     }
-
-    ALOGE("GearMonitor: Vehicle HAL unavailable after %d attempts", kMaxRetries);
+    ALOGE("GearMonitor: Vehicle HAL unavailable");
     return false;
 }
 
-void GearSelectionMonitor::readInitialGear() {
-    GetValueRequest req;
-    req.requestId      = 1;
-    req.prop.prop      = PROP_GEAR_SELECTION;
-    req.prop.areaId    = 0;
-
-    GetValueRequests requests;
-    requests.payloads = {req};
-
-    {
-        std::lock_guard<std::mutex> lock(mInitMutex);
-        mInitDone = false;
-    }
-
-    auto status = mVehicle->getValues(mCallback, requests);
-    if (!status.isOk()) {
-        ALOGW("GearMonitor: getValues failed for initial gear: %s",
-              status.getDescription().c_str());
-        return;
-    }
-
-    // Wait up to 2 seconds for the async response.
-    std::unique_lock<std::mutex> lock(mInitMutex);
-    mInitCv.wait_for(lock, std::chrono::seconds(2), [this] { return mInitDone; });
-    if (!mInitDone) {
-        ALOGW("GearMonitor: timed out waiting for initial gear value");
-    }
-}
 
 void GearSelectionMonitor::evaluateGear(int32_t gear) {
     const bool inReverse  = (gear == GEAR_REVERSE);
     const bool wasReverse = mCurrentlyInReverse.exchange(inReverse);
-    if (inReverse == wasReverse) return;
+    if (inReverse == wasReverse) {
+        ALOGD("GearMonitor: gear=%d no-op (already %s)",
+              gear, inReverse ? "REVERSE" : "NOT-REVERSE");
+        return;
+    }
 
     if (inReverse) {
         ALOGI("GearMonitor: >>> REVERSE engaged — starting camera stream");
-        if (mOnReverse) mOnReverse();
+        bool ok = mOnReverse ? mOnReverse() : true;
+        if (!ok) {
+            // SetProperty failed — roll back so the next REVERSE event retries
+            // instead of being silently dropped as a no-op.
+            mCurrentlyInReverse.store(false);
+            ALOGE("GearMonitor: REVERSE callback failed — state rolled back for retry");
+        }
     } else {
         ALOGI("GearMonitor: >>> Out of REVERSE — stopping camera stream");
         if (mOnNotReverse) mOnNotReverse();
@@ -161,15 +156,9 @@ void GearSelectionMonitor::evaluateGear(int32_t gear) {
         if (result.status == StatusCode::OK && result.prop.has_value() &&
             result.prop->prop == PROP_GEAR_SELECTION &&
             !result.prop->value.int32Values.empty()) {
-            ALOGI("GearMonitor: Initial gear value: %d", result.prop->value.int32Values[0]);
             mParent.evaluateGear(result.prop->value.int32Values[0]);
         }
     }
-    {
-        std::lock_guard<std::mutex> lock(mParent.mInitMutex);
-        mParent.mInitDone = true;
-    }
-    mParent.mInitCv.notify_one();
     return ::ndk::ScopedAStatus::ok();
 }
 

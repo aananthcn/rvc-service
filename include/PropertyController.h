@@ -12,10 +12,11 @@ public:
     explicit PropertyController(const std::string& propName);
 
     // Write "1" → rvc_app opens camera and begins streaming.
-    void notifyReverse();
+    // Returns false if SetProperty fails.
+    bool notifyReverse();
 
     // Write "0" → rvc_app stops streaming and releases camera.
-    void notifyNotReverse();
+    bool notifyNotReverse();
 
 private:
     const std::string mPropName;
