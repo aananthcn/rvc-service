@@ -47,7 +47,7 @@ BOARD_SEPOLICY_DIRS += vendor/brcm/rvc-service/sepolicy
 
 ```bash
 source build/envsetup.sh
-lunch <your_target>
+lunch lunch aosp_rpi5_car-bp4a-userdebug
 
 # Module only (fast iteration)
 mmm vendor/brcm/rvc-service
